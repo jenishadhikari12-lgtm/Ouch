@@ -20,12 +20,16 @@ CROP_OUTPUT_DIR = ROOT_DIR / "ml" / "docservice" / "crops"
 FACE_SERVICE_COMPARE_URL = os.getenv("FACE_SERVICE_COMPARE_URL", "http://127.0.0.1:8001/compare")
 
 DOC_SERVICE_DIR = ROOT_DIR / "ml" / "docservice"
-if str(DOC_SERVICE_DIR) not in sys.path:
-    sys.path.append(str(DOC_SERVICE_DIR))
+FACE_SERVICE_DIR = ROOT_DIR / "ml" / "face-services"
+for service_dir in (DOC_SERVICE_DIR, FACE_SERVICE_DIR):
+    if str(service_dir) not in sys.path:
+        sys.path.append(str(service_dir))
 
 from detect_crop import DocumentDetector
+from embed import get_embedding
+from match import compare_embeddings
 
-app = FastAPI(title="KYC Liveness API")
+app = FastAPI(title="KYC Unified Service")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],

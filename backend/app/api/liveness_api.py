@@ -98,7 +98,7 @@ def upload_kyc_documents(
 @app.post("/api/liveness/run")
 def run_liveness():
     if not LIVENESS_SCRIPT.exists():
-        raise HTTPException(status_code=500, detail="ml/liveness.py not found")
+        raise HTTPException(status_code=500, detail="ml/liveness-service/liveness.py not found")
 
     cmd = [
         sys.executable,

@@ -4,7 +4,19 @@ import os
 import random
 import sys
 import time
+import warnings
 from dataclasses import dataclass
+
+# Reduce noisy native/runtime logs from TensorFlow Lite / MediaPipe.
+os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
+os.environ.setdefault("GLOG_minloglevel", "2")
+os.environ.setdefault("ABSL_MIN_LOG_LEVEL", "2")
+
+warnings.filterwarnings(
+    "ignore",
+    message=r"SymbolDatabase\.GetPrototype\(\) is deprecated\..*",
+    category=UserWarning,
+)
 
 import cv2
 import mediapipe as mp

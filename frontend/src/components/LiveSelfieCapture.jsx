@@ -10,7 +10,7 @@ const LiveSelfieCapture = ({ onCapture, onClear }) => {
   const [busy, setBusy] = useState(false);
 
   const livenessApiBase =
-    import.meta.env.VITE_LIVENESS_API_BASE_URL || "http://localhost:8003";
+    (import.meta.env.VITE_LIVENESS_API_BASE_URL || "").replace(/\/$/, "");
   
   useEffect(() => {
     const startCamera = async () => {
@@ -81,7 +81,11 @@ const LiveSelfieCapture = ({ onCapture, onClear }) => {
   const runPythonLiveness = async () => {
     setBusy(true);
     try {
-      const response = await fetch(`${livenessApiBase}/api/liveness/run`, {
+      const livenessEndpoint = livenessApiBase
+        ? `${livenessApiBase}/api/liveness/run`
+        : "/api/liveness/run";
+
+      const response = await fetch(livenessEndpoint, {
         method: "POST",
       });
 

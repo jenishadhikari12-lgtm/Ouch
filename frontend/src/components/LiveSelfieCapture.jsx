@@ -11,7 +11,7 @@ const LiveSelfieCapture = ({ onCapture, onClear }) => {
 
   const livenessApiBase =
     import.meta.env.VITE_LIVENESS_API_BASE_URL || "http://localhost:8003";
-
+  
   useEffect(() => {
     const startCamera = async () => {
       if (!showCamera) return;

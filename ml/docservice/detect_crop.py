@@ -32,10 +32,7 @@ class DocumentDetector:
 
                 # Crop and save
                 cropped_img = img[y1:y2, x1:x2]
-                if class_name.lower() == "photo":
-                    crop_filename = f"crop_photo_{i}.jpg"
-                else:
-                    crop_filename = f"crop_{class_name}_{i}.jpg"
+                crop_filename = f"crop_{class_name}_{i}.jpg"
                 crop_path = os.path.join(output_dir, crop_filename)
                 cv2.imwrite(crop_path, cropped_img)
 

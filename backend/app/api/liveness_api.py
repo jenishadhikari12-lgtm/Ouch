@@ -3,14 +3,28 @@ import json
 import os
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
+from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 ROOT_DIR = Path(__file__).resolve().parents[3]
-LIVENESS_SCRIPT = ROOT_DIR / "ml" / "liveness.py"
-OUTPUT_DIR = ROOT_DIR / "ml" / "extracted_faces"
+LIVENESS_SERVICE_DIR = ROOT_DIR / "ml" / "liveness-service"
+LIVENESS_SCRIPT = LIVENESS_SERVICE_DIR / "liveness.py"
+OUTPUT_DIR = LIVENESS_SERVICE_DIR / "extracted_faces"
+DOC_SERVICE_DIR = ROOT_DIR / "ml" / "docservice"
+UPLOAD_DIR = DOC_SERVICE_DIR / "uploads"
+CROP_OUTPUT_DIR = DOC_SERVICE_DIR / "crops"
+
+if str(DOC_SERVICE_DIR) not in sys.path:
+    sys.path.append(str(DOC_SERVICE_DIR))
+
+try:
+    from detect_crop import DocumentDetector
+except ModuleNotFoundError:
+    from detectcrop import DocumentDetector
 
 app = FastAPI(title="KYC Liveness API")
 app.add_middleware(
@@ -27,10 +41,68 @@ def health_check():
     return {"status": "ok"}
 
 
+detector = DocumentDetector()
+
+
+def _save_upload(file: UploadFile, destination_dir: Path, prefix: str) -> Path:
+    destination_dir.mkdir(parents=True, exist_ok=True)
+    extension = Path(file.filename or "").suffix or ".jpg"
+    destination_path = destination_dir / f"{prefix}_{uuid4().hex}{extension}"
+
+    with destination_path.open("wb") as out_file:
+        out_file.write(file.file.read())
+
+    return destination_path
+
+
+@app.post("/api/kyc/upload")
+def upload_kyc_documents(
+    full_name: str = Form(...),
+    date_of_birth: str = Form(...),
+    gender: str = Form(...),
+    citizenship_number: str = Form(...),
+    permanent_address: str = Form(...),
+    current_address: str = Form(...),
+    selfie_image: UploadFile = File(...),
+    document_front: UploadFile = File(...),
+    document_back: UploadFile = File(...),
+):
+    del full_name, date_of_birth, gender, citizenship_number
+    del permanent_address, current_address, selfie_image, document_back
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    front_image_path = _save_upload(
+        file=document_front,
+        destination_dir=UPLOAD_DIR,
+        prefix=f"front_{timestamp}",
+    )
+
+    crop_dir = CROP_OUTPUT_DIR / timestamp
+    detections = detector.detect_and_crop(
+        image_path=str(front_image_path),
+        output_dir=str(crop_dir),
+    )
+
+    if not detections:
+        raise HTTPException(
+            status_code=400,
+            detail="No front-side citizenship regions were detected in the uploaded image.",
+        )
+
+    return {
+        "status": "processed",
+        "message": "Citizenship front image processed and crops saved.",
+        "uploaded_front_image": str(front_image_path),
+        "crop_directory": str(crop_dir),
+        "detections": detections,
+    }
+
+
 @app.post("/api/liveness/run")
 def run_liveness():
     if not LIVENESS_SCRIPT.exists():
-        raise HTTPException(status_code=500, detail="ml/liveness.py not found")
+        raise HTTPException(status_code=500, detail="ml/liveness-service/liveness.py not found")
 
     cmd = [
         sys.executable,

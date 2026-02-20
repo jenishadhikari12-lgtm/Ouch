@@ -98,7 +98,6 @@ const LiveSelfieCapture = ({ onCapture, onClear }) => {
   const [preview, setPreview] = useState(null);
   const [statusText, setStatusText] = useState("Open your camera to start.");
   const [errorText, setErrorText] = useState("");
-  const [livenessReady, setLivenessReady] = useState(false);
 
   const stopCamera = () => {
     cancelAnimationFrame(rafRef.current);
@@ -183,25 +182,6 @@ const LiveSelfieCapture = ({ onCapture, onClear }) => {
     setPreview(dataUrl);
     onCapture?.(dataUrl);
     setStatusText("Liveness passed. Face captured.");
-    stopCamera();
-  };
-
-  const capturePhotoFallback = () => {
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
-    if (!video || !canvas) return;
-
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-
-    ctx.drawImage(video, 0, 0);
-    const dataUrl = canvas.toDataURL("image/jpeg", 0.92);
-    setPreview(dataUrl);
-    onCapture?.(dataUrl);
-    setStatusText("Photo captured.");
     stopCamera();
   };
 
@@ -308,29 +288,21 @@ const LiveSelfieCapture = ({ onCapture, onClear }) => {
         setErrorText("");
         setStatusText("Loading liveness model...");
         resetSessionState();
-        setLivenessReady(false);
 
         if (!faceLandmarkerRef.current) {
-          try {
-            const { FilesetResolver, FaceLandmarker } = await loadVisionTasks();
-            const vision = await FilesetResolver.forVisionTasks(WASM_PATH);
-            faceLandmarkerRef.current = await FaceLandmarker.createFromOptions(
-              vision,
-              {
-                baseOptions: { modelAssetPath: MODEL_PATH },
-                runningMode: "VIDEO",
-                numFaces: 1,
-                minFaceDetectionConfidence: 0.4,
-                minFacePresenceConfidence: 0.4,
-                minTrackingConfidence: 0.4,
-              },
-            );
-          } catch (importError) {
-            console.error(importError);
-            setErrorText(
-              "Liveness model could not be loaded. Falling back to standard photo capture.",
-            );
-          }
+          const { FilesetResolver, FaceLandmarker } = await loadVisionTasks();
+          const vision = await FilesetResolver.forVisionTasks(WASM_PATH);
+          faceLandmarkerRef.current = await FaceLandmarker.createFromOptions(
+            vision,
+            {
+              baseOptions: { modelAssetPath: MODEL_PATH },
+              runningMode: "VIDEO",
+              numFaces: 1,
+              minFaceDetectionConfidence: 0.4,
+              minFacePresenceConfidence: 0.4,
+              minTrackingConfidence: 0.4,
+            },
+          );
         }
 
         const stream = await navigator.mediaDevices.getUserMedia({
@@ -344,14 +316,8 @@ const LiveSelfieCapture = ({ onCapture, onClear }) => {
           await videoRef.current.play();
         }
 
-        if (faceLandmarkerRef.current) {
-          setLivenessReady(true);
-          setStatusText("Center your face to begin");
-          rafRef.current = requestAnimationFrame(processFrame);
-        } else {
-          setLivenessReady(false);
-          setStatusText("Liveness unavailable. You can still capture a selfie.");
-        }
+        setStatusText("Center your face to begin");
+        rafRef.current = requestAnimationFrame(processFrame);
       } catch (err) {
         console.error(err);
         setErrorText("Unable to start liveness camera.");
@@ -397,16 +363,6 @@ const LiveSelfieCapture = ({ onCapture, onClear }) => {
           />
 
           <div className="mt-3 flex gap-3">
-            {!livenessReady ? (
-              <button
-                type="button"
-                onClick={capturePhotoFallback}
-                className="cursor-pointer rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white"
-              >
-                Capture
-              </button>
-            ) : null}
-
             <button
               type="button"
               onClick={stopCamera}

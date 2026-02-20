@@ -1,11 +1,11 @@
 import base64
 import json
 import os
-import subprocess
 import sys
 import urllib.error
 import urllib.request
 from datetime import datetime
+import importlib.util
 from pathlib import Path
 from uuid import uuid4
 
@@ -164,39 +164,34 @@ def upload_kyc_documents(
     }
 
 
-@app.post("/api/liveness/run")
-def run_liveness():
+def _load_liveness_runner():
     if not LIVENESS_SCRIPT.exists():
         raise HTTPException(status_code=500, detail="ml/liveness-service/liveness.py not found")
 
-    cmd = [
-        sys.executable,
-        str(LIVENESS_SCRIPT),
-        "--json",
-        "--output-dir",
-        str(OUTPUT_DIR),
-    ]
+    spec = importlib.util.spec_from_file_location("liveness_service", str(LIVENESS_SCRIPT))
+    if spec is None or spec.loader is None:
+        raise HTTPException(status_code=500, detail="Unable to load liveness service module")
 
-    completed = subprocess.run(
-        cmd,
-        cwd=str(ROOT_DIR),
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
 
-    stdout = completed.stdout.strip().splitlines()
-    result_line = stdout[-1] if stdout else "{}"
+    if not hasattr(module, "run_liveness"):
+        raise HTTPException(status_code=500, detail="run_liveness not found in liveness service module")
 
+    return module.run_liveness
+
+
+@app.post("/api/liveness/run")
+def run_liveness():
     try:
-        result = json.loads(result_line)
-    except json.JSONDecodeError as exc:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Invalid liveness response: {result_line}",
-        ) from exc
+        run_liveness_fn = _load_liveness_runner()
+        result = run_liveness_fn(output_dir=str(OUTPUT_DIR), show_window=False)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Liveness service execution failed: {exc}") from exc
 
-    image_path = result.get("image_path")
+    image_path = getattr(result, "image_path", None)
     image_data_url = None
 
     if image_path and os.path.exists(image_path):
@@ -205,9 +200,7 @@ def run_liveness():
         image_data_url = f"data:image/jpeg;base64,{encoded}"
 
     return {
-        "passed": bool(result.get("passed")),
-        "message": result.get("message", "Liveness failed"),
+        "passed": bool(getattr(result, "passed", False)),
+        "message": getattr(result, "message", "Liveness failed"),
         "image": image_data_url,
-        "return_code": completed.returncode,
-        "stderr": completed.stderr.strip(),
     }

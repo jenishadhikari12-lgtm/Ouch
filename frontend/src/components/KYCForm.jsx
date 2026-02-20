@@ -335,7 +335,7 @@ const KYCForm = () => {
 
     try {
       // the backend endpoints are yet to be defined
-      const response = await fetch(`${apiBaseUrl}`, {
+      const response = await fetch(`${apiBaseUrl}/api/kyc/upload`, {
         method: "POST",
         body: formData,
       });

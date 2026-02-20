@@ -7,8 +7,11 @@ const LiveSelfieCapture = ({ onCapture, onClear }) => {
 
   const [showCamera, setShowCamera] = useState(false);
   const [preview, setPreview] = useState(null);
+  const [busy, setBusy] = useState(false);
 
-  
+  const livenessApiBase =
+    import.meta.env.VITE_LIVENESS_API_BASE_URL || "http://localhost:8003";
+
   useEffect(() => {
     const startCamera = async () => {
       if (!showCamera) return;
@@ -42,7 +45,6 @@ const LiveSelfieCapture = ({ onCapture, onClear }) => {
       if (!showCamera) return;
       stopCamera();
     };
-    
   }, [showCamera]);
 
   const stopCamera = () => {
@@ -76,21 +78,65 @@ const LiveSelfieCapture = ({ onCapture, onClear }) => {
     stopCamera();
   };
 
+  const runPythonLiveness = async () => {
+    setBusy(true);
+    try {
+      const response = await fetch(`${livenessApiBase}/api/liveness/run`, {
+        method: "POST",
+      });
+
+      const payload = await response.json();
+
+      if (!response.ok) {
+        throw new Error(payload.detail || "Liveness API call failed");
+      }
+
+      if (!payload.passed) {
+        throw new Error(payload.message || "Active liveness check failed.");
+      }
+
+      if (!payload.image) {
+        throw new Error("Liveness passed but no selfie image was returned.");
+      }
+
+      setPreview(payload.image);
+      onCapture?.(payload.image);
+      alert("Active liveness passed. Selfie captured.");
+    } catch (error) {
+      console.error(error);
+      alert(
+        `Active liveness failed: ${error.message}. Please ensure backend API is running and complete all on-screen liveness prompts.`,
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
       <p className="text-sm font-medium text-slate-700">Live Selfie</p>
       <p className="mt-1 text-xs text-slate-500">
-        Open your camera and capture a clear selfie.
+        Use either browser capture or Python active liveness verification.
       </p>
 
       {!showCamera && !preview && (
-        <button
-          type="button"
-          onClick={() => setShowCamera(true)}
-          className="cursor-pointer mt-3 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white"
-        >
-          Open Camera
-        </button>
+        <div className="mt-3 flex flex-col gap-2">
+          <button
+            type="button"
+            onClick={() => setShowCamera(true)}
+            className="cursor-pointer rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white"
+          >
+            Open Camera
+          </button>
+          <button
+            type="button"
+            onClick={runPythonLiveness}
+            disabled={busy}
+            className="cursor-pointer rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+          >
+            {busy ? "Running Active Liveness..." : "Run Active Liveness (Python)"}
+          </button>
+        </div>
       )}
 
       {showCamera && (
@@ -131,7 +177,7 @@ const LiveSelfieCapture = ({ onCapture, onClear }) => {
               setPreview(null);
               onClear?.();
             }}
-            className="cursor-pointer rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white"
+            className="mt-3 cursor-pointer rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white"
           >
             Retake
           </button>

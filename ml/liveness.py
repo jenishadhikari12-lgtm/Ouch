@@ -1,49 +1,22 @@
+import argparse
+import json
+import os
+import random
+import sys
+import time
+from dataclasses import dataclass
+
 import cv2
-import numpy as np
 import mediapipe as mp
+import numpy as np
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
-import random
-import time
-import os
-import sys
 
-# ─────────────────────────────────────────────────────────────
-# PATH CONFIG
-# ─────────────────────────────────────────────────────────────
 MODEL_PATH = os.path.join(os.path.dirname(__file__), "face_landmarker.task")
-if not os.path.exists(MODEL_PATH):
-    print("❌ face_landmarker.task not found!")
-    sys.exit(1)
-
-# ─────────────────────────────────────────────────────────────
-# MEDIAPIPE INIT (VIDEO MODE ✅)
-# ─────────────────────────────────────────────────────────────
-base_options = python.BaseOptions(model_asset_path=MODEL_PATH)
-options = vision.FaceLandmarkerOptions(
-    base_options=base_options,
-    running_mode=vision.RunningMode.VIDEO,
-    num_faces=1,
-    min_face_detection_confidence=0.4,
-    min_face_presence_confidence=0.4,
-    min_tracking_confidence=0.4
-)
-face_landmarker = vision.FaceLandmarker.create_from_options(options)
-
-# ─────────────────────────────────────────────────────────────
-# CONSTANTS
-# ─────────────────────────────────────────────────────────────
 LEFT_EYE = [33, 160, 158, 133, 153, 144]
 RIGHT_EYE = [362, 385, 387, 263, 373, 380]
 
-depth_history = []
-stability_buffer = []
 
-os.makedirs("extracted_faces", exist_ok=True)
-
-# ─────────────────────────────────────────────────────────────
-# HELPER FUNCTIONS
-# ─────────────────────────────────────────────────────────────
 def get_face_bounds(frame, landmarks):
     h, w, _ = frame.shape
     xs = [int(lm.x * w) for lm in landmarks]
@@ -64,7 +37,9 @@ def get_face_bounds(frame, landmarks):
 
 def eye_aspect_ratio(landmarks, idx):
     p = [np.array([landmarks[i].x, landmarks[i].y]) for i in idx]
-    return (np.linalg.norm(p[1]-p[5]) + np.linalg.norm(p[2]-p[4])) / (2*np.linalg.norm(p[0]-p[3]))
+    return (np.linalg.norm(p[1] - p[5]) + np.linalg.norm(p[2] - p[4])) / (
+        2 * np.linalg.norm(p[0] - p[3])
+    )
 
 
 def get_mouth_ratio(landmarks):
@@ -72,7 +47,7 @@ def get_mouth_ratio(landmarks):
     low = np.array([landmarks[14].x, landmarks[14].y])
     l = np.array([landmarks[61].x, landmarks[61].y])
     r = np.array([landmarks[291].x, landmarks[291].y])
-    return np.linalg.norm(up-low) / np.linalg.norm(l-r)
+    return np.linalg.norm(up - low) / np.linalg.norm(l - r)
 
 
 def get_head_pose_and_depth(landmarks):
@@ -90,26 +65,13 @@ def get_head_pose_and_depth(landmarks):
     return direction, depth
 
 
-def is_face_stable(landmarks):
-    stability_buffer.append([landmarks[1].x, landmarks[1].y])
-    if len(stability_buffer) > 15:
-        stability_buffer.pop(0)
-    if len(stability_buffer) < 15:
-        return False
-    return np.max(np.std(stability_buffer, axis=0)) < 0.006
+@dataclass
+class LivenessResult:
+    passed: bool
+    message: str
+    image_path: str | None = None
 
 
-def spoof_check(depth):
-    depth_history.append(depth)
-    if len(depth_history) > 50:
-        depth_history.pop(0)
-    if len(depth_history) < 50:
-        return True
-    return np.var(depth_history) > 5e-8
-
-# ─────────────────────────────────────────────────────────────
-# LIVENESS SESSION
-# ─────────────────────────────────────────────────────────────
 class LivenessSession:
     def __init__(self):
         self.tasks = ["BLINK", "TURN_LEFT", "TURN_RIGHT", "OPEN_MOUTH"]
@@ -117,19 +79,30 @@ class LivenessSession:
         self.idx = 0
         self.counter = 0
         self.active = True
+        self.depth_history = []
+
+    def spoof_check(self, depth):
+        self.depth_history.append(depth)
+        if len(self.depth_history) > 50:
+            self.depth_history.pop(0)
+        if len(self.depth_history) < 50:
+            return True
+        return np.var(self.depth_history) > 5e-8
 
     def update(self, landmarks):
         direction, depth = get_head_pose_and_depth(landmarks)
-        if not spoof_check(depth):
+        if not self.spoof_check(depth):
             self.active = False
-            return "SPOOF DETECTED", (0,0,255)
+            return "SPOOF DETECTED", (0, 0, 255)
 
         task = self.tasks[self.idx]
         passed = False
 
         if task == "BLINK":
-            ear = (eye_aspect_ratio(landmarks, LEFT_EYE) +
-                   eye_aspect_ratio(landmarks, RIGHT_EYE)) / 2
+            ear = (
+                eye_aspect_ratio(landmarks, LEFT_EYE)
+                + eye_aspect_ratio(landmarks, RIGHT_EYE)
+            ) / 2
             if ear < 0.18:
                 self.counter += 1
             if self.counter >= 2:
@@ -151,67 +124,131 @@ class LivenessSession:
             self.counter = 0
             if self.idx >= len(self.tasks):
                 self.active = False
-                return "LIVENESS PASSED ✅", (0,255,0)
+                return "LIVENESS PASSED", (0, 255, 0)
 
-        return f"{task}", (0,255,255)
+        return f"{task}", (0, 255, 255)
 
-# ─────────────────────────────────────────────────────────────
-# MAIN LOOP
-# ─────────────────────────────────────────────────────────────
-cap = cv2.VideoCapture(0)
-if not cap.isOpened():
-    print("❌ Webcam not found")
-    sys.exit(1)
 
-session = LivenessSession()
-photo_saved = False
-hold_start = None
+def run_liveness(output_dir="extracted_faces", show_window=True):
+    if not os.path.exists(MODEL_PATH):
+        return LivenessResult(False, "face_landmarker.task not found")
 
-while True:
-    ret, frame = cap.read()
-    if not ret:
-        break
+    os.makedirs(output_dir, exist_ok=True)
 
-    frame = cv2.flip(frame, 1)
-    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    mp_img = mp.Image(mp.ImageFormat.SRGB, rgb)
-    timestamp = int(time.time() * 1000)
+    base_options = python.BaseOptions(model_asset_path=MODEL_PATH)
+    options = vision.FaceLandmarkerOptions(
+        base_options=base_options,
+        running_mode=vision.RunningMode.VIDEO,
+        num_faces=1,
+        min_face_detection_confidence=0.4,
+        min_face_presence_confidence=0.4,
+        min_tracking_confidence=0.4,
+    )
+    face_landmarker = vision.FaceLandmarker.create_from_options(options)
 
-    result = face_landmarker.detect_for_video(mp_img, timestamp)
+    cap = cv2.VideoCapture(0)
+    if not cap.isOpened():
+        return LivenessResult(False, "Webcam not found")
 
-    msg, color = "LOOK AT CAMERA", (200,200,200)
+    session = LivenessSession()
+    photo_saved = False
+    hold_start = None
+    stability_buffer = []
+    message = "LOOK AT CAMERA"
 
-    if result.face_landmarks:
-        lm = result.face_landmarks[0]
-        direction, _ = get_head_pose_and_depth(lm)
-        mouth = get_mouth_ratio(lm)
+    def is_face_stable(landmarks):
+        stability_buffer.append([landmarks[1].x, landmarks[1].y])
+        if len(stability_buffer) > 15:
+            stability_buffer.pop(0)
+        if len(stability_buffer) < 15:
+            return False
+        return np.max(np.std(stability_buffer, axis=0)) < 0.006
 
-        if not photo_saved:
-            if direction == "CENTER" and mouth < 0.2 and is_face_stable(lm):
-                if hold_start is None:
-                    hold_start = time.time()
-                elapsed = time.time() - hold_start
-                msg = f"HOLD STILL {round(2-elapsed,1)}s"
-                color = (0,255,0)
+    image_path = None
 
-                if elapsed >= 2:
-                    x1,y1,x2,y2 = get_face_bounds(frame, lm)
-                    cv2.imwrite("extracted_faces/face.jpg", frame[y1:y2, x1:x2])
-                    photo_saved = True
-                    msg = "PHOTO CAPTURED ✓"
-                    color = (0,255,80)
+    try:
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                message = "Failed to read camera frame"
+                break
+
+            frame = cv2.flip(frame, 1)
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            mp_img = mp.Image(mp.ImageFormat.SRGB, rgb)
+            timestamp = int(time.time() * 1000)
+            result = face_landmarker.detect_for_video(mp_img, timestamp)
+
+            msg, color = "LOOK AT CAMERA", (200, 200, 200)
+
+            if result.face_landmarks:
+                lm = result.face_landmarks[0]
+                direction, _ = get_head_pose_and_depth(lm)
+                mouth = get_mouth_ratio(lm)
+
+                if not photo_saved:
+                    if direction == "CENTER" and mouth < 0.2 and is_face_stable(lm):
+                        if hold_start is None:
+                            hold_start = time.time()
+                        elapsed = time.time() - hold_start
+                        msg = f"HOLD STILL {round(2 - elapsed, 1)}s"
+                        color = (0, 255, 0)
+
+                        if elapsed >= 2:
+                            x1, y1, x2, y2 = get_face_bounds(frame, lm)
+                            image_path = os.path.join(output_dir, "face.jpg")
+                            cv2.imwrite(image_path, frame[y1:y2, x1:x2])
+                            photo_saved = True
+                            msg = "PHOTO CAPTURED"
+                            color = (0, 255, 80)
+                    else:
+                        hold_start = None
+                        msg = "CENTER FACE & CLOSE MOUTH"
+                        color = (255, 200, 0)
+                else:
+                    msg, color = session.update(lm)
+
+            message = msg
+
+            if show_window:
+                cv2.putText(frame, msg, (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
+                cv2.imshow("KYC Liveness System", frame)
+                if cv2.waitKey(1) & 0xFF == ord("q"):
+                    break
             else:
-                hold_start = None
-                msg = "CENTER FACE & CLOSE MOUTH"
-                color = (255,200,0)
-        else:
-            msg, color = session.update(lm)
+                if not session.active and photo_saved:
+                    break
 
-    cv2.putText(frame, msg, (20,50), cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
-    cv2.imshow("KYC Liveness System", frame)
+            if not session.active:
+                break
+    finally:
+        cap.release()
+        if show_window:
+            cv2.destroyAllWindows()
 
-    if cv2.waitKey(1) & 0xFF == ord('q'):
-        break
+    passed = message == "LIVENESS PASSED"
+    if not photo_saved:
+        return LivenessResult(False, "Photo capture failed")
+    if passed:
+        return LivenessResult(True, message, image_path)
+    return LivenessResult(False, message, image_path)
 
-cap.release()
-cv2.destroyAllWindows()
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--output-dir", default=os.path.join(os.path.dirname(__file__), "extracted_faces"))
+    parser.add_argument("--json", action="store_true", help="Print JSON result only")
+    args = parser.parse_args()
+
+    result = run_liveness(output_dir=args.output_dir, show_window=True)
+    if args.json:
+        print(json.dumps(result.__dict__))
+    else:
+        print(result.message)
+
+    if not result.passed:
+        raise SystemExit(1)
+
+
+if __name__ == "__main__":
+    main()

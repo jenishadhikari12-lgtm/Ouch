@@ -165,6 +165,7 @@ def run_liveness(output_dir="extracted_faces", show_window=True):
         return np.max(np.std(stability_buffer, axis=0)) < 0.006
 
     image_path = None
+    can_show_window = show_window
 
     try:
         while True:
@@ -210,11 +211,14 @@ def run_liveness(output_dir="extracted_faces", show_window=True):
 
             message = msg
 
-            if show_window:
+            if can_show_window:
                 cv2.putText(frame, msg, (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
-                cv2.imshow("KYC Liveness System", frame)
-                if cv2.waitKey(1) & 0xFF == ord("q"):
-                    break
+                try:
+                    cv2.imshow("KYC Liveness System", frame)
+                    if cv2.waitKey(1) & 0xFF == ord("q"):
+                        break
+                except cv2.error:
+                    can_show_window = False
             else:
                 if not session.active and photo_saved:
                     break
@@ -223,8 +227,11 @@ def run_liveness(output_dir="extracted_faces", show_window=True):
                 break
     finally:
         cap.release()
-        if show_window:
-            cv2.destroyAllWindows()
+        if can_show_window:
+            try:
+                cv2.destroyAllWindows()
+            except cv2.error:
+                pass
 
     passed = message == "LIVENESS PASSED"
     if not photo_saved:
@@ -238,9 +245,11 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output-dir", default=os.path.join(os.path.dirname(__file__), "extracted_faces"))
     parser.add_argument("--json", action="store_true", help="Print JSON result only")
+    parser.add_argument("--show-window", action="store_true", help="Show OpenCV preview window")
     args = parser.parse_args()
 
-    result = run_liveness(output_dir=args.output_dir, show_window=True)
+    show_window = args.show_window and not args.json
+    result = run_liveness(output_dir=args.output_dir, show_window=show_window)
     if args.json:
         print(json.dumps(result.__dict__))
     else:

@@ -2,7 +2,8 @@ import base64
 import json
 import os
 import sys
-import tempfile
+import urllib.error
+import urllib.request
 from datetime import datetime
 import importlib.util
 from pathlib import Path
@@ -16,6 +17,7 @@ LIVENESS_SCRIPT = ROOT_DIR / "ml" / "liveness-service" / "liveness.py"
 OUTPUT_DIR = ROOT_DIR / "ml" / "liveness-service" / "extracted_faces"
 UPLOAD_DIR = ROOT_DIR / "ml" / "docservice" / "uploads"
 CROP_OUTPUT_DIR = ROOT_DIR / "ml" / "docservice" / "crops"
+FACE_SERVICE_COMPARE_URL = os.getenv("FACE_SERVICE_COMPARE_URL", "http://127.0.0.1:8001/compare")
 
 DOC_SERVICE_DIR = ROOT_DIR / "ml" / "docservice"
 FACE_SERVICE_DIR = ROOT_DIR / "ml" / "face-services"
@@ -56,43 +58,50 @@ def _save_upload(file: UploadFile, destination_dir: Path, prefix: str) -> Path:
     return destination_path
 
 
-def _compare_faces_from_paths(doc_path: Path, selfie_path: Path) -> dict:
-    try:
-        emb_doc = get_embedding(str(doc_path))
-        emb_selfie = get_embedding(str(selfie_path))
-        result = compare_embeddings(emb_doc, emb_selfie)
-        return {
-            "similarity": float(result["similarity"]),
-            "match": bool(result["match"]),
-            "threshold_used": float(result["threshold_used"]),
-        }
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Face comparison failed: {exc}") from exc
+def _build_multipart_body(doc_path: Path, selfie_path: Path, boundary: str) -> bytes:
+    parts = []
+
+    for field_name, file_path in (("doc_image", doc_path), ("selfie_image", selfie_path)):
+        filename = file_path.name
+        content = file_path.read_bytes()
+        header = (
+            f"--{boundary}\r\n"
+            f"Content-Disposition: form-data; name=\"{field_name}\"; filename=\"{filename}\"\r\n"
+            "Content-Type: image/jpeg\r\n\r\n"
+        ).encode("utf-8")
+        parts.append(header + content + b"\r\n")
+
+    parts.append(f"--{boundary}--\r\n".encode("utf-8"))
+    return b"".join(parts)
 
 
-@app.post("/compare")
-async def compare_faces(
-    doc_image: UploadFile = File(...),
-    selfie_image: UploadFile = File(...),
-):
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp_doc, tempfile.NamedTemporaryFile(
-        delete=False, suffix=".jpg"
-    ) as tmp_selfie:
-        tmp_doc.write(await doc_image.read())
-        tmp_selfie.write(await selfie_image.read())
+def _compare_faces(doc_path: Path, selfie_path: Path) -> dict:
+    boundary = f"----OuchBoundary{uuid4().hex}"
+    body = _build_multipart_body(doc_path=doc_path, selfie_path=selfie_path, boundary=boundary)
 
-    doc_path = Path(tmp_doc.name)
-    selfie_path = Path(tmp_selfie.name)
+    request = urllib.request.Request(
+        FACE_SERVICE_COMPARE_URL,
+        data=body,
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        method="POST",
+    )
 
     try:
-        return _compare_faces_from_paths(doc_path=doc_path, selfie_path=selfie_path)
-    finally:
-        if doc_path.exists():
-            doc_path.unlink()
-        if selfie_path.exists():
-            selfie_path.unlink()
+        with urllib.request.urlopen(request, timeout=30) as response:
+            payload = response.read().decode("utf-8")
+    except urllib.error.URLError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Failed to reach face service at {FACE_SERVICE_COMPARE_URL}: {exc}",
+        ) from exc
+
+    try:
+        return json.loads(payload)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Invalid response from face service: {payload}",
+        ) from exc
 
 
 @app.post("/api/kyc/upload")
@@ -141,7 +150,7 @@ def upload_kyc_documents(
         raise HTTPException(status_code=400, detail="No citizenship photo crop detected for face comparison.")
 
     crop_photo_path = Path(photo_crop["crop_path"])
-    face_similarity = _compare_faces_from_paths(doc_path=crop_photo_path, selfie_path=selfie_image_path)
+    face_similarity = _compare_faces(doc_path=crop_photo_path, selfie_path=selfie_image_path)
     print(f"Face similarity score: {face_similarity.get('similarity')}")
 
     return {

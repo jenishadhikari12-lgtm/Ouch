@@ -11,8 +11,8 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 ROOT_DIR = Path(__file__).resolve().parents[3]
-LIVENESS_SCRIPT = ROOT_DIR / "ml" / "liveness.py"
-OUTPUT_DIR = ROOT_DIR / "ml" / "extracted_faces"
+LIVENESS_SCRIPT = ROOT_DIR / "ml" / "liveness-service" / "liveness.py"
+OUTPUT_DIR = ROOT_DIR / "ml" / "liveness-service" / "extracted_faces"
 UPLOAD_DIR = ROOT_DIR / "ml" / "docservice" / "uploads"
 CROP_OUTPUT_DIR = ROOT_DIR / "ml" / "docservice" / "crops"
 

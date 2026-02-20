@@ -123,13 +123,6 @@ const LiveSelfieCapture = ({ onCapture, onClear }) => {
         <div className="mt-3 flex flex-col gap-2">
           <button
             type="button"
-            onClick={() => setShowCamera(true)}
-            className="cursor-pointer rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white"
-          >
-            Open Camera
-          </button>
-          <button
-            type="button"
             onClick={runPythonLiveness}
             disabled={busy}
             className="cursor-pointer rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"

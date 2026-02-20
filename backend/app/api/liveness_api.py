@@ -11,20 +11,16 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 ROOT_DIR = Path(__file__).resolve().parents[3]
-LIVENESS_SERVICE_DIR = ROOT_DIR / "ml" / "liveness-service"
-LIVENESS_SCRIPT = LIVENESS_SERVICE_DIR / "liveness.py"
-OUTPUT_DIR = LIVENESS_SERVICE_DIR / "extracted_faces"
-DOC_SERVICE_DIR = ROOT_DIR / "ml" / "docservice"
-UPLOAD_DIR = DOC_SERVICE_DIR / "uploads"
-CROP_OUTPUT_DIR = DOC_SERVICE_DIR / "crops"
+LIVENESS_SCRIPT = ROOT_DIR / "ml" / "liveness.py"
+OUTPUT_DIR = ROOT_DIR / "ml" / "extracted_faces"
+UPLOAD_DIR = ROOT_DIR / "ml" / "docservice" / "uploads"
+CROP_OUTPUT_DIR = ROOT_DIR / "ml" / "docservice" / "crops"
 
+DOC_SERVICE_DIR = ROOT_DIR / "ml" / "docservice"
 if str(DOC_SERVICE_DIR) not in sys.path:
     sys.path.append(str(DOC_SERVICE_DIR))
 
-try:
-    from detect_crop import DocumentDetector
-except ModuleNotFoundError:
-    from detectcrop import DocumentDetector
+from detect_crop import DocumentDetector
 
 app = FastAPI(title="KYC Liveness API")
 app.add_middleware(
